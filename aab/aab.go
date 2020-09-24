@@ -1,4 +1,4 @@
-package apk
+package aab
 
 import (
 	"archive/zip"
@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"image"
 	"io"
-	"io/ioutil"
 	"os"
 	"strconv"
 
@@ -18,16 +17,16 @@ import (
 	_ "image/png"  // handle png format
 )
 
-// Apk is an application package file for android.
-type Apk struct {
+// Aab is an application package file for android.
+type Aab struct {
 	f         *os.File
 	zipreader *zip.Reader
 	manifest  Manifest
 	table     *androidbinary.TableFile
 }
 
-// OpenFile will open the file specified by filename and return Apk
-func OpenFile(filename string) (apk *Apk, err error) {
+// OpenFile will open the file specified by filename and return Aab
+func OpenFile(filename string) (apk *Aab, err error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -50,12 +49,12 @@ func OpenFile(filename string) (apk *Apk, err error) {
 }
 
 // OpenZipReader has same arguments like zip.NewReader
-func OpenZipReader(r io.ReaderAt, size int64) (*Apk, error) {
+func OpenZipReader(r io.ReaderAt, size int64) (*Aab, error) {
 	zipreader, err := zip.NewReader(r, size)
 	if err != nil {
 		return nil, err
 	}
-	apk := &Apk{
+	apk := &Aab{
 		zipreader: zipreader,
 	}
 	if err = apk.parseManifest(); err != nil {
@@ -68,7 +67,7 @@ func OpenZipReader(r io.ReaderAt, size int64) (*Apk, error) {
 }
 
 // Close is avaliable only if apk is created with OpenFile
-func (k *Apk) Close() error {
+func (k *Aab) Close() error {
 	if k.f == nil {
 		return nil
 	}
@@ -76,7 +75,7 @@ func (k *Apk) Close() error {
 }
 
 // Icon returns the icon image of the APK.
-func (k *Apk) Icon(resConfig *androidbinary.ResTableConfig) (image.Image, error) {
+func (k *Aab) Icon(resConfig *androidbinary.ResTableConfig) (image.Image, error) {
 	iconPath := k.getResource(k.manifest.App.Icon, resConfig)
 	if androidbinary.IsResID(iconPath) {
 		return nil, errors.New("unable to convert icon-id to icon path")
@@ -90,7 +89,7 @@ func (k *Apk) Icon(resConfig *androidbinary.ResTableConfig) (image.Image, error)
 }
 
 // Label returns the label of the APK.
-func (k *Apk) Label(resConfig *androidbinary.ResTableConfig) (s string, err error) {
+func (k *Aab) Label(resConfig *androidbinary.ResTableConfig) (s string, err error) {
 	s = k.getResource(k.manifest.App.Label, resConfig)
 	if androidbinary.IsResID(s) {
 		err = errors.New("unable to convert label-id to string")
@@ -99,12 +98,12 @@ func (k *Apk) Label(resConfig *androidbinary.ResTableConfig) (s string, err erro
 }
 
 // Manifest returns the manifest of the APK.
-func (k *Apk) Manifest() Manifest {
+func (k *Aab) Manifest() Manifest {
 	return k.manifest
 }
 
 // PackageName returns the package name of the APK.
-func (k *Apk) PackageName() string {
+func (k *Aab) PackageName() string {
 	return k.manifest.Package
 }
 
@@ -130,7 +129,7 @@ func isMainIntentFilter(intent ActivityIntentFilter) bool {
 }
 
 // MainActivity returns the name of the main activity.
-func (k *Apk) MainActivity() (activity string, err error) {
+func (k *Aab) MainActivity() (activity string, err error) {
 	for _, act := range k.manifest.App.Activities {
 		for _, intent := range act.IntentFilters {
 			if isMainIntentFilter(intent) {
@@ -149,25 +148,29 @@ func (k *Apk) MainActivity() (activity string, err error) {
 	return "", errors.New("No main activity found")
 }
 
-func (k *Apk) parseManifest() error {
-	xmlData, err := k.readZipFile("AndroidManifest.xml")
+func (k *Aab) parseManifest() error {
+	xmlData, err := k.readZipFile("base/manifest/AndroidManifest.xml")
+	fmt.Println(string(xmlData))
 	if err != nil {
+		fmt.Println("read zip file")
 		return errors.Wrap(err, "read-manifest.xml")
 	}
-	xmlfile, err := androidbinary.NewXMLFile(bytes.NewReader(xmlData))
+
+	xmlContent, err := androidbinary.NewXMLFile(bytes.NewReader(xmlData))
 	if err != nil {
+		fmt.Println("xmlContent")
 		return errors.Wrap(err, "parse-xml")
 	}
-	reader := xmlfile.Reader()
-	data, err := ioutil.ReadAll(reader)
-	if err != nil {
+
+	decoder := xml.NewDecoder(xmlContent.Reader())
+	if err := decoder.Decode(&k.manifest); err != nil {
+		fmt.Println("错误")
 		return err
 	}
-	fmt.Println(string(data))
-	return xml.Unmarshal(data, &k.manifest)
+	return nil
 }
 
-func (k *Apk) parseResources() (err error) {
+func (k *Aab) parseResources() (err error) {
 	resData, err := k.readZipFile("resources.arsc")
 	if err != nil {
 		return
@@ -176,7 +179,7 @@ func (k *Apk) parseResources() (err error) {
 	return
 }
 
-func (k *Apk) getResource(id string, resConfig *androidbinary.ResTableConfig) string {
+func (k *Aab) getResource(id string, resConfig *androidbinary.ResTableConfig) string {
 	resID, err := androidbinary.ParseResID(id)
 	if err != nil {
 		return id
@@ -188,9 +191,10 @@ func (k *Apk) getResource(id string, resConfig *androidbinary.ResTableConfig) st
 	return fmt.Sprintf("%s", val)
 }
 
-func (k *Apk) readZipFile(name string) (data []byte, err error) {
+func (k *Aab) readZipFile(name string) (data []byte, err error) {
 	buf := bytes.NewBuffer(nil)
 	for _, file := range k.zipreader.File {
+		fmt.Println(file.Name)
 		if file.Name != name {
 			continue
 		}
@@ -202,6 +206,7 @@ func (k *Apk) readZipFile(name string) (data []byte, err error) {
 		defer rc.Close()
 		_, err = io.Copy(buf, rc)
 		if err != nil {
+			fmt.Printf("copy : %s\n", err.Error())
 			return
 		}
 		return buf.Bytes(), nil
